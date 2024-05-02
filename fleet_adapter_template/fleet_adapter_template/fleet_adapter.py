@@ -148,23 +148,25 @@ def initialize_fleet(config_yaml, nav_graph_path, node, use_sim_time, server_uri
     mse = nudged.estimate_error(transforms['rmf_to_robot'],
                                 rmf_coordinates,
                                 robot_coordinates)
-    print(f"Coordinate transformation error: {mse}")
-    print("RMF to Robot transform:")
-    print(f"    rotation:{transforms['rmf_to_robot'].get_rotation()}")
-    print(f"    scale:{transforms['rmf_to_robot'].get_scale()}")
-    print(f"    trans:{transforms['rmf_to_robot'].get_translation()}")
-    print("Robot to RMF transform:")
-    print(f"    rotation:{transforms['robot_to_rmf'].get_rotation()}")
-    print(f"    scale:{transforms['robot_to_rmf'].get_scale()}")
-    print(f"    trans:{transforms['robot_to_rmf'].get_translation()}")
+    # print(f"Coordinate transformation error: {mse}")
+    # print("RMF to Robot transform:")
+    # print(f"    rotation:{transforms['rmf_to_robot'].get_rotation()}")
+    # print(f"    scale:{transforms['rmf_to_robot'].get_scale()}")
+    # print(f"    trans:{transforms['rmf_to_robot'].get_translation()}")
+    # print("Robot to RMF transform:")
+    # print(f"    rotation:{transforms['robot_to_rmf'].get_rotation()}")
+    # print(f"    scale:{transforms['robot_to_rmf'].get_scale()}")
+    # print(f"    trans:{transforms['robot_to_rmf'].get_translation()}")
 
     def _updater_inserter(cmd_handle, update_handle):
         """Insert a RobotUpdateHandle."""
         cmd_handle.update_handle = update_handle
 
     # Initialize robot API for this fleet
+    prefix = 'http://' + fleet_config['fleet_manager']['ip'] + \
+             ':' + str(fleet_config['fleet_manager']['port'])
     api = RobotAPI(
-        fleet_config['fleet_manager']['prefix'],
+        prefix,
         fleet_config['fleet_manager']['user'],
         fleet_config['fleet_manager']['password'])
 
@@ -178,10 +180,10 @@ def initialize_fleet(config_yaml, nav_graph_path, node, use_sim_time, server_uri
             time.sleep(0.2)
             for robot_name in list(missing_robots.keys()):
                 node.get_logger().debug(f"Connecting to robot: {robot_name}")
-                position = api.position(robot_name)
-                if position is None:
+                data = api.data(robot_name)
+                if data is None:
                     continue
-                if len(position) > 2:
+                if data['success']:
                     node.get_logger().info(f"Initializing robot: {robot_name}")
                     robots_config = config_yaml['robots'][robot_name]
                     rmf_config = robots_config['rmf_config']
@@ -191,6 +193,13 @@ def initialize_fleet(config_yaml, nav_graph_path, node, use_sim_time, server_uri
 
                     starts = []
                     time_now = adapter.now()
+                    
+                    position = api.position(robot_name)
+                    if position is None:
+                        node.get_logger().info(
+                            f'Failed to get initial position of {robot_name}'
+                        )
+                        continue
 
                     if (initial_waypoint is not None) and\
                             (initial_orientation is not None):
@@ -305,10 +314,11 @@ def main(argv=sys.argv):
         param = Parameter("use_sim_time", Parameter.Type.BOOL, True)
         node.set_parameters([param])
 
-    if args.server_uri == "":
-            server_uri = None
-    else:
-        server_uri = args.server_uri
+    node.declare_parameter('server_uri', rclpy.Parameter.Type.STRING)
+    server_uri = node.get_parameter(
+        'server_uri').get_parameter_value().string_value
+    if server_uri == "":
+        server_uri = None
 
     adapter = initialize_fleet(
         config_yaml,
