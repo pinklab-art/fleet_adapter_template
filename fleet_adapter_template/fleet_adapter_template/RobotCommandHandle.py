@@ -104,8 +104,13 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
         self._quit_path_event = threading.Event()
         self._dock_thread = None
         self._quit_dock_event = threading.Event()
+        
+        self.start = False
+        
+        self.timer = self.node.create_timer(1.0 / self.update_frequency, self.update)
 
-        self.node.get_logger().info(
+
+        self.node.get_logger().debug(
             f"The robot is starting at: [{self.position[0]:.2f}, "
             f"{self.position[1]:.2f}, {self.position[2]:.2f}]")
 
@@ -142,7 +147,7 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
     def stop(self):
         # Stop the robot. Tracking variables should remain unchanged.
         while True:
-            self.node.get_logger().info("Requesting robot to stop...")
+            self.node.get_logger().debug("Requesting robot to stop...")
             if self.api.stop(self.name):
                 break
             self.sleep_for(0.1)
@@ -162,7 +167,7 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
         self.stop()
         self._quit_path_event.clear()
 
-        self.node.get_logger().info("Received new path to follow...")
+        self.node.get_logger().debug("Received new path to follow...")
 
         self.remaining_waypoints = self.get_remaining_waypoints(waypoints)
         assert next_arrival_estimator is not None
@@ -178,7 +183,7 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
                 self.state == RobotState.WAITING):
                 # Check if we need to abort
                 if self._quit_path_event.is_set():
-                    self.node.get_logger().info("Aborting previously followed "
+                    self.node.get_logger().debug("Aborting previously followed "
                                                 "path")
                     return
                 # State machine
@@ -204,7 +209,7 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
                         self.remaining_waypoints = self.remaining_waypoints[1:]
                         self.state = RobotState.MOVING
                     else:
-                        self.node.get_logger().info(
+                        self.node.get_logger().debug(
                             f"Robot {self.name} failed to navigate to "
                             f"[{x:.0f}, {y:.0f}, {theta:.0f}] coordinates. "
                             f"Retrying...")
@@ -220,7 +225,7 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
                                 self.state = RobotState.IDLE
                             else:
                                 if self.path_index is not None:
-                                    self.node.get_logger().info(
+                                    self.node.get_logger().debug(
                                         f"Waiting for "
                                         f"{(waypoint_wait_time - time_now).seconds}s")
                                     self.next_arrival_estimator(
@@ -231,7 +236,7 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
                     # Check if we have reached the target
                     with self._lock:
                         if (self.api.navigation_completed(self.name)):
-                            self.node.get_logger().info(
+                            self.node.get_logger().debug(
                                 f"Robot [{self.name}] has reached its target "
                                 f"waypoint")
                             self.state = RobotState.WAITING
@@ -273,7 +278,7 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
                             self.next_arrival_estimator(
                                 self.path_index, timedelta(seconds=duration))
             self.path_finished_callback()
-            self.node.get_logger().info(
+            self.node.get_logger().debug(
                 f"Robot {self.name} has successfully navigated along "
                 f"requested path.")
 
@@ -308,7 +313,7 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
 
         def _dock():
             # Request the robot to start the relevant process
-            self.node.get_logger().info(
+            self.node.get_logger().debug(
                 f"Requesting robot {self.name} to dock at {self.dock_name}")
             self.api.start_process(self.name, self.dock_name, self.map_name)
 
@@ -323,16 +328,16 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
             while (not self.api.docking_completed(self.name)):
                 # Check if we need to abort
                 if self._quit_dock_event.is_set():
-                    self.node.get_logger().info("Aborting docking")
+                    self.node.get_logger().debug("Aborting docking")
                     return
-                self.node.get_logger().info("Robot is docking...")
+                self.node.get_logger().debug("Robot is docking...")
                 self.sleep_for(0.1)
 
             with self._lock:
                 self.on_waypoint = self.dock_waypoint_index
                 self.dock_waypoint_index = None
                 self.docking_finished_callback()
-                self.node.get_logger().info("Docking completed")
+                self.node.get_logger().debug("Docking completed")
 
         self._dock_thread = threading.Thread(target=_dock)
         self._dock_thread.start()
@@ -340,12 +345,21 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
     def get_position(self):
         ''' This helper function returns the live position of the robot in the
         RMF coordinate frame'''
+        self.node.get_logger().debug(
+            f"Requesting position for robot {self.name}")
+        
         position = self.api.position(self.name)
         if position is not None:
+            self.node.get_logger().debug(
+                f"Received position for robot: {position}")
             x, y = self.transforms['robot_to_rmf'].transform(
                 [position[0], position[1]])
-            theta = math.radians(position[2]) - \
+            theta = position[2] - \
                 self.transforms['orientation_offset']
+            # theta = math.radians(position[2]) - self.transforms['orientation_offset']
+            self.node.get_logger().debug(
+                f"Transformed position for robot X: {x:.2f}, Y: {y:.2f}"
+                f"Theta: {theta:.2f}")
             # ------------------------ #
             # IMPLEMENT YOUR CODE HERE #
             # Ensure x, y are in meters and theta in radians #
@@ -378,26 +392,40 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
             self.update_state()
 
     def update_state(self):
+        self.node.get_logger().debug(
+            f"Updating_state for robot {self.name}")
+        # Update battery state of charge
         self.update_handle.update_battery_soc(self.battery_soc)
+        
         if not self.charger_is_set:
             if ("max_delay" in self.config.keys()):
                 max_delay = self.config["max_delay"]
-                self.node.get_logger().info(
+                self.node.get_logger().debug(
                     f"Setting max delay to {max_delay}s")
                 self.update_handle.set_maximum_delay(max_delay)
             if (self.charger_waypoint_index < self.graph.num_waypoints):
                 self.update_handle.set_charger_waypoint(
                     self.charger_waypoint_index)
             else:
-                self.node.get_logger().warn(
+                self.node.get_logger().debug(
                     "Invalid waypoint supplied for charger. "
                     "Using default nearest charger in the map")
             self.charger_is_set = True
+            self.node.get_logger().debug(f"Charger waypoint set: {self.charger_waypoint_index}")
         # Update position
         with self._lock:
-            if (self.on_waypoint is not None):  # if robot is on a waypoint
-                self.update_handle.update_current_waypoint(
-                    self.on_waypoint, self.position[2])
+            if (self.on_waypoint is not None):
+                    # NumPy 배열 형태로 위치 정보 생성
+                position_array = np.array([[self.position[0]], [self.position[1]], [self.position[2]]])
+                if self.start == True:
+                    self.update_handle.update_current_waypoint(self.on_waypoint, self.position[2])
+                    self.node.get_logger().info(f"Updated update_current_waypoint position(0): {self.position}")
+                elif self.start == False:
+                    # RMF에 현재 위치 업데이트
+                    self.update_handle.update_off_grid_position(position_array, self.on_waypoint)
+                    self.node.get_logger().info(f"Updated off-grid position(1): {self.position}")
+                    # self.start = True
+
             elif (self.on_lane is not None):  # if robot is on a lane
                 # We only keep track of the forward lane of the robot.
                 # However, when calling this update it is recommended to also
@@ -409,21 +437,29 @@ class RobotCommandHandle(adpt.RobotCommandHandle):
                 exit_index = forward_lane.exit.waypoint_index
                 reverse_lane = self.graph.lane_from(exit_index, entry_index)
                 lane_indices = [self.on_lane]
+                self.start == True
                 if reverse_lane is not None:  # Unidirectional graph
                     lane_indices.append(reverse_lane.index)
                 self.update_handle.update_current_lanes(
                     self.position, lane_indices)
+                self.node.get_logger().info(f"Updated current lanes(2): {lane_indices}, Position: {self.position}")
+
             elif (self.dock_waypoint_index is not None):
+                self.node.get_logger().info(f"Updated off grid position(3) for dock or target waypoint, Position: {self.position}")
                 self.update_handle.update_off_grid_position(
                     self.position, self.dock_waypoint_index)
+
             # if robot is merging into a waypoint
             elif (self.target_waypoint is not None and
                 self.target_waypoint.graph_index is not None):
                 self.update_handle.update_off_grid_position(
                     self.position, self.target_waypoint.graph_index)
+                self.node.get_logger().info(f"Updated off grid position(4) for dock or target waypoint, Position: {self.position}")
+
             else:  # if robot is lost
                 self.update_handle.update_lost_position(
                     self.map_name, self.position)
+                self.node.get_logger().info(f"Robot is lost, updating(5) lost position, Position: {self.position}")
 
     def get_current_lane(self):
         def projection(current_position,
