@@ -27,6 +27,7 @@ setup(
         'console_scripts': [
             'fleet_adapter=fleet_adapter_template.fleet_adapter:main',
             'fleet_manager=fleet_adapter_template.fleet_manager:main',
+            'map_switcher=fleet_adapter_template.map_switcher:main',
         ],
     },
 )

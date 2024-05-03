@@ -10,6 +10,9 @@
     <arg name="server_uri" default=""
         description="The URI of the api server to transmit state and task information." />
     <arg name="output" default="screen" />
+    <arg name="L1_map_yaml" description="Path to the Level 1 map file" />
+    <arg name="L2_map_yaml" description="Path to the Level 2 map file" /> 
+
 
     <!-- Fleet manager -->
     <node pkg="fleet_adapter_template"
@@ -42,5 +45,11 @@
             <param name="server_uri" value="$(var server_uri)" />
         </node>
     </group>
+
+    <!-- Map Switcher -->
+    <node pkg="fleet_adapter_template" exec="map_switcher"
+        args="$(var L1_map_yaml) $(var L2_map_yaml)" output="$(var output)">
+        <param name="use_sim_time" value="$(var use_sim_time)" />
+    </node>
 
 </launch>
